@@ -4,13 +4,22 @@ import winreg
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QCheckBox, QPushButton, 
                              QLineEdit, QScrollArea, QSystemTrayIcon, QMenu, 
-                             QStyle, QSizePolicy, QSizeGrip)
-from PyQt6.QtCore import Qt, QPoint, QSize
+                             QStyle, QSizePolicy, QSizeGrip, QComboBox)
+from PyQt6.QtCore import Qt, QPoint, QSize, pyqtSignal
 from PyQt6.QtGui import QIcon, QAction, QColor
+import datetime
 
 import data_manager
 import config_manager
 from background_dialog import BackgroundDialog
+
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal()
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 class TaskItemWidget(QWidget):
     def __init__(self, task_data, on_delete, on_status_change):
@@ -29,10 +38,17 @@ class TaskItemWidget(QWidget):
         self.checkbox.setChecked(self.task_data.get("completed", False))
         self.checkbox.stateChanged.connect(self.status_changed)
         
-        self.label = QLabel(self.task_data.get("text", ""))
+        self.label = ClickableLabel(self.task_data.get("text", ""))
         self.label.setWordWrap(True)
+        self.label.clicked.connect(self.start_editing)
         self.font_config = {"family": "Arial", "size": 14, "bold": True, "italic": False, "color": "#ffffff"}
         self.apply_font(self.font_config)
+        
+        self.edit_input = QLineEdit(self.task_data.get("text", ""))
+        self.edit_input.hide()
+        self.edit_input.setStyleSheet("padding: 5px; border-radius: 5px; color: black; background-color: white;")
+        self.edit_input.returnPressed.connect(self.finish_editing)
+        self.edit_input.editingFinished.connect(self.finish_editing)
             
         self.delete_btn = QPushButton("X")
         self.delete_btn.setStyleSheet("background-color: #ff4d4d; color: white; border: none; border-radius: 3px; padding: 2px 5px;")
@@ -42,6 +58,7 @@ class TaskItemWidget(QWidget):
         
         layout.addWidget(self.checkbox)
         layout.addWidget(self.label, 1) # stretch
+        layout.addWidget(self.edit_input, 1)
         layout.addWidget(self.delete_btn)
         
         self.setLayout(layout)
@@ -65,14 +82,39 @@ class TaskItemWidget(QWidget):
         self.apply_font(self.font_config)
         self.on_status_change()
         
+    def start_editing(self):
+        if getattr(self, 'edit_mode', False):
+            self.label.hide()
+            self.edit_input.setText(self.task_data.get("text", ""))
+            self.edit_input.show()
+            self.edit_input.setFocus()
+
+    def finish_editing(self):
+        if self.edit_input.isHidden():
+            return
+        new_text = self.edit_input.text().strip()
+        if new_text:
+            self.task_data["text"] = new_text
+            self.label.setText(new_text)
+            self.on_status_change()
+        self.edit_input.hide()
+        self.label.show()
+        
     def set_edit_mode(self, enabled):
+        self.edit_mode = enabled
         self.delete_btn.setVisible(enabled)
+        if not enabled and not getattr(self, 'edit_input', None) is None and not self.edit_input.isHidden():
+            self.finish_editing()
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config = config_manager.load_config()
-        self.tasks = data_manager.load_tasks()
+        self.tasks_dict = data_manager.load_tasks()
+        
+        today_idx = datetime.datetime.today().weekday()
+        self.current_day = data_manager.DEFAULT_DAYS[today_idx]
+        
         self.edit_mode = False
         self.drag_pos = QPoint()
         
@@ -95,6 +137,30 @@ class MainWindow(QMainWindow):
         
         self.main_layout = QVBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Day Label (Visible in normal mode)
+        self.day_label = QLabel(self.current_day)
+        self.day_label.setStyleSheet("color: white; font-size: 18px; font-weight: bold;")
+        self.day_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.main_layout.addWidget(self.day_label)
+        
+        # Day Combo (Visible in edit mode)
+        self.day_combo = QComboBox()
+        self.day_combo.addItems(data_manager.DEFAULT_DAYS)
+        self.day_combo.setCurrentText(self.current_day)
+        self.day_combo.setStyleSheet("""
+            QComboBox {
+                background-color: rgba(255, 255, 255, 200);
+                border: 1px solid #aaa;
+                border-radius: 5px;
+                padding: 5px;
+                font-weight: bold;
+                color: black;
+            }
+        """)
+        self.day_combo.currentTextChanged.connect(self.on_day_changed)
+        self.main_layout.addWidget(self.day_combo)
+        self.day_combo.hide()
         
         # Scroll area for tasks
         self.scroll_area = QScrollArea()
@@ -137,6 +203,11 @@ class MainWindow(QMainWindow):
         self.task_widgets = []
         self.populate_tasks()
 
+    def on_day_changed(self, text):
+        self.current_day = text
+        self.day_label.setText(text)
+        self.populate_tasks()
+
     def populate_tasks(self):
         # Clear existing
         for w in self.task_widgets:
@@ -144,7 +215,8 @@ class MainWindow(QMainWindow):
             w.deleteLater()
         self.task_widgets.clear()
         
-        for task in self.tasks:
+        current_tasks = self.tasks_dict.get(self.current_day, [])
+        for task in current_tasks:
             self.create_task_widget(task)
             
     def create_task_widget(self, task):
@@ -158,20 +230,23 @@ class MainWindow(QMainWindow):
         text = self.task_input.text().strip()
         if text:
             new_task = {"text": text, "completed": False}
-            self.tasks.append(new_task)
+            if self.current_day not in self.tasks_dict:
+                self.tasks_dict[self.current_day] = []
+            self.tasks_dict[self.current_day].append(new_task)
             self.create_task_widget(new_task)
             self.task_input.clear()
             self.save_data()
 
     def delete_task(self, widget):
-        self.tasks.remove(widget.task_data)
+        if widget.task_data in self.tasks_dict.get(self.current_day, []):
+            self.tasks_dict[self.current_day].remove(widget.task_data)
         self.scroll_layout.removeWidget(widget)
         self.task_widgets.remove(widget)
         widget.deleteLater()
         self.save_data()
         
     def save_data(self):
-        data_manager.save_tasks(self.tasks)
+        data_manager.save_tasks(self.tasks_dict)
         
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
@@ -229,11 +304,15 @@ class MainWindow(QMainWindow):
         if self.edit_mode:
             # Interactive, visible background
             self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+            self.day_label.hide()
+            self.day_combo.show()
             self.input_widget.show()
             self.size_grip.show()
         else:
             # Click-through, transparent, on bottom
             self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnBottomHint | Qt.WindowType.WindowTransparentForInput)
+            self.day_combo.hide()
+            self.day_label.show()
             self.input_widget.hide()
             self.size_grip.hide()
             
