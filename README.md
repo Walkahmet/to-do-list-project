@@ -2,14 +2,14 @@
 
 A lightweight, customizable, transparent To-Do list widget for Windows desktops built with Python and PyQt6. It acts as an interactive wallpaper widget that you can seamlessly integrate into your daily workflow.
 
-## ✨ Features
+##  Features
 - **Transparent Desktop Widget:** Sits natively on your wallpaper without interfering with your mouse clicks.
 - **Edit Mode:** Toggle edit mode via the system tray to add, delete, move, and check off tasks.
 - **Customizable Backgrounds:** Choose from default images, set your own custom images, or make it completely transparent.
 - **Customizable Fonts:** Change the font family, style, size, and color of your tasks.
 - **Auto-Start:** Optionally run the application automatically when Windows starts.
 
-## 🚀 Installation & Usage
+##  Installation & Usage
 
 1. **Clone the repository:**
    ```bash
@@ -27,7 +27,7 @@ A lightweight, customizable, transparent To-Do list widget for Windows desktops 
    python app.py
    ```
 
-## 📦 Building Executable (.exe)
+## Building Executable (.exe)
 
 You can build a standalone executable using PyInstaller. Make sure you are in the project directory:
 
